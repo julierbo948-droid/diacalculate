@@ -117,33 +117,53 @@ async def cmd_start(message: Message):
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
+# --- Optimized Calculation Functions ---
+
 @dp.message(Command("price"))
 async def cmd_price(message: Message):
     if not await is_approved(message.from_user.id):
         await message.reply("❌ သင်သည် ဤဘော့ကို အသုံးပြုခွင့် မရှိသေးပါ။")
         return
 
-    text = f"{h_emo} <b>MLBB Diamond Prices</b> {h_emo}\n\n{w_emo} <b>Weekly Pass:</b>\n"
+    # Database ကို ၃ ကြိမ်ပဲ ခေါ်ပြီး Memory ထဲမှာ သိမ်းထားမယ်
+    user_id = message.from_user.id
+    rate_l = await get_user_setting(user_id, 'rate_large')
+    rate_s = await get_user_setting(user_id, 'rate_small')
+    profit = await get_user_setting(user_id, 'profit')
+
+    # တွက်ချက်မှုအတွက် Local Function တစ်ခု ဆောက်ထားမယ်
+    def quick_calc(coin_val, r, p):
+        total = (coin_val * r) * (1 + p / 100)
+        return int(round(total / 50) * 50)
+
+    text = f"{h_emo} <b>MLBB Diamond Prices</b> {h_emo}\n\n"
+    
+    # Weekly Pass Section
+    text += f"{w_emo} <b>Weekly Pass:</b>\n"
     for k, v in COIN_PRICES["WP"].items():
-        res = await calc(v, message.from_user.id)
+        res = quick_calc(v, rate_l, profit)
         text += f"• {k} {a_emo} {res:,} MMK\n"
 
+    # Regular & Small Diamonds Section
     text += f"\n{rg_emo} <b>Regular Diamonds:</b>\n"
     for k, v in COIN_PRICES["Small"].items():
-        res = await calc(v, message.from_user.id, is_small=True)
+        res = quick_calc(v, rate_s, profit) # စိန်အသေးအတွက် rate_small သုံးမယ်
         text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
+        
     for k, v in COIN_PRICES["Regular"].items():
-        res = await calc(v, message.from_user.id)
+        res = quick_calc(v, rate_l, profit)
         text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
 
+    # Double Diamonds Section
     text += f"\n{db_emo} <b>2X Diamond Pass:</b> {db_emo}\n"
     for k, v in COIN_PRICES["Double"].items():
-        res = await calc(v, message.from_user.id)
+        res = quick_calc(v, rate_l, profit)
         text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
 
-    text += f"\n{t_emo} • Twilight Pass = {await calc(COIN_PRICES['Others']['tp'], message.from_user.id):,} MMK\n"
-    text += f"{w_emo} Weekly elite bundle = {await calc(COIN_PRICES['Others']['web'], message.from_user.id):,} MMK\n"
-    text += f"{m_emo} Monthly epic bundle = {await calc(COIN_PRICES['Others']['meb'], message.from_user.id):,} MMK\n"
+    # Others Section
+    text += f"\n{t_emo} • Twilight Pass = {quick_calc(COIN_PRICES['Others']['tp'], rate_l, profit):,} MMK\n"
+    text += f"{w_emo} Weekly elite bundle = {quick_calc(COIN_PRICES['Others']['web'], rate_l, profit):,} MMK\n"
+    text += f"{m_emo} Monthly epic bundle = {quick_calc(COIN_PRICES['Others']['meb'], rate_l, profit):,} MMK\n"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Price", callback_data="btn_price")],
@@ -151,6 +171,50 @@ async def cmd_price(message: Message):
         [InlineKeyboardButton(text="💰 Set Profit", callback_data="btn_set_profit")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "btn_price")
+async def btn_price(cb: CallbackQuery):
+    if not await is_approved(cb.from_user.id):
+        await cb.answer("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။", show_alert=True)
+        return
+
+    # Callback မှာလည်း အပေါ်ကအတိုင်း Database ခေါ်တာ လျှော့ချမယ်
+    user_id = cb.from_user.id
+    rate_l = await get_user_setting(user_id, 'rate_large')
+    rate_s = await get_user_setting(user_id, 'rate_small')
+    profit = await get_user_setting(user_id, 'profit')
+
+    def quick_calc(coin_val, r, p):
+        total = (coin_val * r) * (1 + p / 100)
+        return int(round(total / 50) * 50)
+
+    text = f"{h_emo} <b>MLBB Diamond Prices</b> {h_emo}\n\n"
+    
+    text += f"{w_emo} <b>Weekly Pass:</b>\n"
+    for k, v in COIN_PRICES['WP'].items():
+        res = quick_calc(v, rate_l, profit)
+        text += f"• {k} {a_emo} {res:,} MMK\n"
+    
+    text += f"\n{rg_emo} <b>Regular Diamonds:</b>\n"
+    for k, v in COIN_PRICES['Small'].items():
+        res = quick_calc(v, rate_s, profit)
+        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
+        
+    for k, v in COIN_PRICES['Regular'].items():
+        res = quick_calc(v, rate_l, profit)
+        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
+    
+    text += f"\n{db_emo} <b>2X Diamond Pass:</b> {db_emo}\n"
+    for k, v in COIN_PRICES['Double'].items():
+        res = quick_calc(v, rate_l, profit)
+        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
+    
+    text += f"\n{t_emo} • Twilight Pass = {quick_calc(COIN_PRICES['Others']['tp'], rate_l, profit):,} MMK\n"
+    text += f"{w_emo} Weekly elite bundle = {quick_calc(COIN_PRICES['Others']['web'], rate_l, profit):,} MMK\n"
+    text += f"{m_emo} Monthly epic bundle = {quick_calc(COIN_PRICES['Others']['meb'], rate_l, profit):,} MMK\n"
+
+    await cb.message.answer(text, parse_mode='HTML')
+    await cb.answer()
 
 @dp.callback_query(F.data.startswith("req_"))
 async def request_access(cb: CallbackQuery):
