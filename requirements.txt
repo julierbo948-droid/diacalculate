@@ -1,0 +1,4 @@
+aiogram
+motor
+dnspython
+python-dotenv
