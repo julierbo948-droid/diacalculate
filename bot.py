@@ -1,14 +1,11 @@
 import asyncio
 import logging
 import os
-import re  # ထည့်သွင်းထားသည်
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-from aiogram.filters import Command, or_f
-from aiogram import Bot, Dispatcher, F, types # types ထည့်ထားသည်
-from aiogram.enums import ParseMode # ParseMode အတွက် ထည့်ထားသည်
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from curl_cffi.requests import AsyncSession # AsyncSession အတွက် (impersonate သုံးထားသောကြောင့်)
 
 # --- .env ဖိုင်မှ အချက်အလက်များ ဆွဲယူခြင်း ---
 load_dotenv()
@@ -42,19 +39,22 @@ dp = Dispatcher()
 # --- Database Helper Functions (MongoDB Version) ---
 
 async def get_user_setting(user_id, key):
+    # User တစ်ဦးချင်းစီရဲ့ Setting ကို အရင်ရှာမည်
     user = await users_col.find_one({"user_id": user_id, "key": key})
     if user:
         return user['value']
     
+    # မရှိပါက Global Default (user_id: 0) ကို ရှာမည်
     default = await users_col.find_one({"user_id": 0, "key": key})
     if default:
         return default['value']
     
+    # လုံးဝမရှိသေးပါက Default တန်ဖိုးများ သတ်မှတ်ပေးရန်
     defaults = {"rate_large": 80.0, "rate_small": 80.0, "profit": 5.0}
     return defaults.get(key)
 
 async def is_approved(user_id):
-    if int(user_id) == int(ADMIN_ID): return True
+    if user_id == ADMIN_ID: return True
     user = await approved_col.find_one({"user_id": user_id})
     return user is not None
 
@@ -103,6 +103,7 @@ rq_emo = f"<tg-emoji emoji-id='{REQ_EMOJI_ID}'>🔑</tg-emoji>"
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     if not await is_approved(message.from_user.id):
+        await message.answer(f"<tg-emoji emoji-id='{RATE_EMOJI_ID}'>❤️</tg-emoji>", parse_mode="HTML")
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔑 အသုံးပြုခွင့်တောင်းရန်", callback_data=f"req_{message.from_user.id}")]
         ])
@@ -116,41 +117,50 @@ async def cmd_start(message: Message):
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
+# --- Optimized Calculation Functions ---
+
 @dp.message(Command("price"))
 async def cmd_price(message: Message):
     if not await is_approved(message.from_user.id):
         await message.reply("❌ သင်သည် ဤဘော့ကို အသုံးပြုခွင့် မရှိသေးပါ။")
         return
 
+    # Database ကို ၃ ကြိမ်ပဲ ခေါ်ပြီး Memory ထဲမှာ သိမ်းထားမယ်
     user_id = message.from_user.id
     rate_l = await get_user_setting(user_id, 'rate_large')
     rate_s = await get_user_setting(user_id, 'rate_small')
     profit = await get_user_setting(user_id, 'profit')
 
+    # တွက်ချက်မှုအတွက် Local Function တစ်ခု ဆောက်ထားမယ်
     def quick_calc(coin_val, r, p):
         total = (coin_val * r) * (1 + p / 100)
         return int(round(total / 50) * 50)
 
     text = f"{h_emo} <b>MLBB Diamond Prices</b> {h_emo}\n\n"
+    
+    # Weekly Pass Section
     text += f"{w_emo} <b>Weekly Pass:</b>\n"
     for k, v in COIN_PRICES["WP"].items():
         res = quick_calc(v, rate_l, profit)
         text += f"• {k} {a_emo} {res:,} MMK\n"
 
+    # Regular & Small Diamonds Section
     text += f"\n{rg_emo} <b>Regular Diamonds:</b>\n"
     for k, v in COIN_PRICES["Small"].items():
-        res = quick_calc(v, rate_s, profit)
+        res = quick_calc(v, rate_s, profit) # စိန်အသေးအတွက် rate_small သုံးမယ်
         text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
         
     for k, v in COIN_PRICES["Regular"].items():
         res = quick_calc(v, rate_l, profit)
         text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
 
+    # Double Diamonds Section
     text += f"\n{db_emo} <b>2X Diamond Pass:</b> {db_emo}\n"
     for k, v in COIN_PRICES["Double"].items():
         res = quick_calc(v, rate_l, profit)
         text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
 
+    # Others Section
     text += f"\n{t_emo} • Twilight Pass = {quick_calc(COIN_PRICES['Others']['tp'], rate_l, profit):,} MMK\n"
     text += f"{w_emo} Weekly elite bundle = {quick_calc(COIN_PRICES['Others']['web'], rate_l, profit):,} MMK\n"
     text += f"{m_emo} Monthly epic bundle = {quick_calc(COIN_PRICES['Others']['meb'], rate_l, profit):,} MMK\n"
@@ -163,11 +173,12 @@ async def cmd_price(message: Message):
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 @dp.callback_query(F.data == "btn_price")
-async def btn_price_callback(cb: CallbackQuery):
+async def btn_price(cb: CallbackQuery):
     if not await is_approved(cb.from_user.id):
         await cb.answer("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။", show_alert=True)
         return
 
+    # Callback မှာလည်း အပေါ်ကအတိုင်း Database ခေါ်တာ လျှော့ချမယ်
     user_id = cb.from_user.id
     rate_l = await get_user_setting(user_id, 'rate_large')
     rate_s = await get_user_setting(user_id, 'rate_small')
@@ -178,6 +189,7 @@ async def btn_price_callback(cb: CallbackQuery):
         return int(round(total / 50) * 50)
 
     text = f"{h_emo} <b>MLBB Diamond Prices</b> {h_emo}\n\n"
+    
     text += f"{w_emo} <b>Weekly Pass:</b>\n"
     for k, v in COIN_PRICES['WP'].items():
         res = quick_calc(v, rate_l, profit)
@@ -218,6 +230,36 @@ async def approve_user(cb: CallbackQuery):
     await bot.send_message(uid, "✅ Admin က သင့်ကို အသုံးပြုခွင့် ပေးလိုက်ပါပြီ။\n/price ကို သုံးနိုင်ပါပြီ။")
     await cb.message.edit_text(f"✅ User {uid} ကို ခွင့်ပြုပြီးပါပြီ။")
 
+@dp.callback_query(F.data == "btn_price")
+async def btn_price(cb: CallbackQuery):
+    if not await is_approved(cb.from_user.id):
+        await cb.answer("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။", show_alert=True)
+        return
+    
+    text = f"{h_emo} <b>MLBB Diamond Prices</b> {h_emo}\n\n{w_emo} <b>Weekly Pass:</b>\n"
+    for k, v in COIN_PRICES['WP'].items():
+        res = await calc(v, cb.from_user.id)
+        text += f"• {k} {a_emo} {res:,} MMK\n"
+    
+    text += f"\n{rg_emo} <b>Regular Diamonds:</b>\n"
+    for k, v in COIN_PRICES['Small'].items():
+        res = await calc(v, cb.from_user.id, is_small=True)
+        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n\n"
+    for k, v in COIN_PRICES['Regular'].items():
+        res = await calc(v, cb.from_user.id)
+        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
+    
+    text += f"\n{db_emo} <b>2X Diamond Pass:</b> {db_emo}\n"
+    for k, v in COIN_PRICES['Double'].items():
+        res = await calc(v, cb.from_user.id)
+        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
+    
+    text += f"\n{t_emo} • Twilight Pass = {await calc(COIN_PRICES['Others']['tp'], cb.from_user.id):,} MMK\n"
+    text += f"{w_emo} Weekly elite bundle = {await calc(COIN_PRICES['Others']['web'], cb.from_user.id):,} MMK\n"
+    text += f"{m_emo} Monthly epic bundle = {await calc(COIN_PRICES['Others']['meb'], cb.from_user.id):,} MMK\n"
+    await cb.message.answer(text, parse_mode='HTML')
+    await cb.answer()
+
 @dp.callback_query(F.data == "btn_set_rate")
 async def btn_set_rate(cb: CallbackQuery):
     if not await is_approved(cb.from_user.id):
@@ -236,15 +278,22 @@ async def btn_set_profit(cb: CallbackQuery):
 
 @dp.message(or_f(Command("role"), F.text.regexp(r"(?i)^\.role(?:$|\s+)")))
 async def handle_check_role(message: types.Message):
-    if not await is_approved(message.from_user.id): return await message.reply("ɴᴏᴛ ᴀᴜᴛʜᴏʀɪᴢᴇᴅ ᴜsᴇʀ.")
+
+    if not await is_authorized(message.from_user.id): return await message.reply("ɴᴏᴛ ᴀᴜᴛʜᴏʀɪᴢᴇᴅ ᴜsᴇʀ.")
     match = re.search(r"(?i)^[./]?role\s+(\d+)\s*[\(]?\s*(\d+)\s*[\)]?", message.text.strip())
     if not match: return await message.reply("❌ Invalid format. Use: `.role 12345678 1234`")
     
     game_id, zone_id = match.group(1).strip(), match.group(2).strip()
     loading_msg = await message.reply("<tg-emoji emoji-id='6186254847713484259'>❤️</tg-emoji>", parse_mode=ParseMode.HTML)
 
+    # ---------------------------------------------------------
+    # ၁။ Caliph Dev API (Name, Region စစ်ဆေးရန်)
+    # ---------------------------------------------------------
     url_caliph = 'https://cekidml.caliph.dev/api/validasi'
-    params_caliph = {'id': game_id, 'serverid': zone_id}
+    params_caliph = {
+        'id': game_id,
+        'serverid': zone_id
+    }
     headers_caliph = {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
         'Accept': 'application/json, text/javascript, */*; q=0.01',
@@ -252,8 +301,14 @@ async def handle_check_role(message: types.Message):
         'X-Requested-With': 'XMLHttpRequest'
     }
 
+    # ---------------------------------------------------------
+    # ၂။ Malsawma Store API (Double Diamond Bonus စစ်ဆေးရန်)
+    # ---------------------------------------------------------
     url_malsawma = 'https://www.malsawmastore.in/gadget/doublediamonds_action.php'
-    payload_malsawma = {'id': game_id, 'zone': zone_id}
+    payload_malsawma = {
+        'id': game_id,
+        'zone': zone_id
+    }
     headers_malsawma = {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
         'Origin': 'https://www.malsawmastore.in',
@@ -263,6 +318,9 @@ async def handle_check_role(message: types.Message):
 
     try:
         async with AsyncSession(impersonate="safari_ios") as local_scraper:
+           
+            await local_scraper.get('https://cekidml.caliph.dev/', headers=headers_caliph, timeout=15)
+            
             res_caliph, res_malsawma = await asyncio.gather(
                 local_scraper.get(url_caliph, params=params_caliph, headers=headers_caliph, timeout=15),
                 local_scraper.post(url_malsawma, data=payload_malsawma, headers=headers_malsawma, timeout=15)
@@ -273,6 +331,7 @@ async def handle_check_role(message: types.Message):
 
         try:
             data_caliph = res_caliph.json()
+            
             if data_caliph.get('status') == 'success':
                 result_data = data_caliph.get('result', {})
                 ig_name = result_data.get('nickname', 'Unknown')
@@ -280,10 +339,16 @@ async def handle_check_role(message: types.Message):
             else:
                 error_msg = data_caliph.get('message') or data_caliph.get('msg') or "Game ID သို့မဟုတ် Zone ID မှားယွင်းနေပါသည်။"
                 return await loading_msg.edit_text(f"❌ <b>Invalid Account:</b> {error_msg}", parse_mode=ParseMode.HTML)
-        except:
-            return await loading_msg.edit_text("❌ API Error: Caliph API မှ အချက်အလက်မရနိုင်ပါ။", parse_mode=ParseMode.HTML)
+
+        except Exception as e:
+        
+            debug_msg = res_caliph.text[:120].replace('<', '&lt;').replace('>', '&gt;').strip()
+            return await loading_msg.edit_text(f"❌ **API Error:**\n<code>{debug_msg}...</code>", parse_mode=ParseMode.HTML)
+
 
         limit_50 = limit_150 = limit_250 = limit_500 = True 
+        debug_bonus_error = ""
+
         try:
             data_double = res_malsawma.json()
             if str(data_double.get('status', '')).lower() == 'true':
@@ -292,8 +357,29 @@ async def handle_check_role(message: types.Message):
                 limit_150 = not dd_data.get('150', False)
                 limit_250 = not dd_data.get('250', False)
                 limit_500 = not dd_data.get('500', False)
-        except:
-            pass
+            else:
+                debug_bonus_error = " <i>(Bonus Data Unavailable)</i>"
+        except Exception as e:
+            debug_bonus_error = " <i>(Bonus Data Error)</i>"
+
+        # ==========================================
+        # (ဂ) Keyboard နှင့် Report ထုတ်ပေးခြင်း
+        # ==========================================
+        style_50 = "danger" if limit_50 else "success"
+        style_150 = "danger" if limit_150 else "success"
+        style_250 = "danger" if limit_250 else "success"
+        style_500 = "danger" if limit_500 else "success"
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Bᴏɴᴜs 50+50", callback_data="ignore", style=style_50),
+                InlineKeyboardButton(text="Bᴏɴᴜs 150+150", callback_data="ignore", style=style_150)
+            ],
+            [
+                InlineKeyboardButton(text="Bᴏɴᴜs 250+250", callback_data="ignore", style=style_250),
+                InlineKeyboardButton(text="Bᴏɴᴜs 500+500", callback_data="ignore", style=style_500)
+            ]
+        ])
 
         final_report = (
             f"<u><b>Mᴏʙɪʟᴇ Lᴇɢᴇɴᴅs Bᴀɴɢ Bᴀɴɢ</b></u>\n\n"
@@ -301,9 +387,10 @@ async def handle_check_role(message: types.Message):
             f"👤 <code>{'Nickname':<9}:</code> {ig_name}\n"
             f"🌍 <code>{'Region'  :<9}:</code> {region}\n"
             f"────────────────\n\n"
-            f"🎁 <b>Fɪʀsᴛ Rᴇᴄʜᴀʀɢᴇ Bᴏɴᴜs Sᴛᴀᴛᴜs</b>"
+            f"🎁 <b>Fɪʀsᴛ Rᴇᴄʜᴀʀɢᴇ Bᴏɴᴜs Sᴛᴀᴛᴜs</b>{debug_bonus_error}"
         )
-        await loading_msg.edit_text(final_report, parse_mode=ParseMode.HTML)
+
+        await loading_msg.edit_text(final_report, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     except Exception as e: 
         await loading_msg.edit_text(f"❌ System Error: {str(e)}", parse_mode=ParseMode.HTML)
 
@@ -314,15 +401,14 @@ async def handle_settings(message: Message, command: Command):
         return
     try:
         val = float(message.text.split()[1])
-        cmd_name = message.text.split()[0][1:]
-        key = "rate_large" if cmd_name == "r" else "rate_small" if cmd_name == "r2" else "profit"
+        key = "rate_large" if command.command == "r" else "rate_small" if command.command == "r2" else "profit"
         await users_col.update_one({"user_id": message.from_user.id, "key": key}, {"$set": {"value": val}}, upsert=True)
         await message.reply(f"{re_emo} သတ်မှတ်ချက် အောင်မြင်ပါသည်။", parse_mode="HTML")
     except:
         await message.reply("❌ မှန်ကန်စွာ ထည့်သွင်းပါ။")
 
 async def main():
-    # MongoDB ချိတ်ဆက်မှုကို တစ်ခါတည်း စစ်ဆေးမည်
+    # Global Default များ ထည့်သွင်းရန် (user_id: 0)
     for key, val in [("rate_large", 80.0), ("rate_small", 80.0), ("profit", 5.0)]:
         await users_col.update_one({"user_id": 0, "key": key}, {"$set": {"value": val}}, upsert=True)
     await dp.start_polling(bot)
