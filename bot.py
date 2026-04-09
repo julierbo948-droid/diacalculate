@@ -3,6 +3,7 @@ import logging
 import os
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
+from aiogram.filters import Command, or_f
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
