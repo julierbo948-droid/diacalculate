@@ -364,6 +364,9 @@ async def converter_handler(message: Message):
         elif "b2m" in cmd:
             r = usd_rate / ex["USDTTHB"]
             await message.reply(f"🇹🇭 {val:,} THB\n🇲🇲 {val * r:,.0f} MMK\n\n(Rate: {r:,.2f})")
+        elif "mb" in cmd:
+            r = usd_rate / ex["USDTTHB"]
+            await message.reply(f"🇲🇲 {val:,} MMK\n🇹🇭 {val * r:,.2f} TTHB\n\n(Rate: {r:,.2f})")    
         elif "t2m" in cmd:
             if ex["TONUSDT"] == 0:
                 return await message.reply("❌ Binance မှ TON ဈေးနှုန်း ဆွဲမရဖြစ်နေပါသည်။ ခဏနေမှ ပြန်ကြိုးစားပါ။")
