@@ -2,25 +2,29 @@ import asyncio
 import logging
 import os
 import re
+import aiohttp
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-# --- .env ဖိုင်မှ အချက်အလက်များ ဆွဲယူခြင်း ---
+# --- ၁။ Setup & Configuration ---
 load_dotenv()
 API_TOKEN = os.getenv('API_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
 MONGO_URL = os.getenv('MONGO_URL')
 
-# --- MongoDB ချိတ်ဆက်ခြင်း ---
 client = AsyncIOMotorClient(MONGO_URL)
 db = client['mlbb_bot_db']
 users_col = db['user_settings']
 approved_col = db['approved_users']
 
-# Premium Emoji ID များ
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
+
+# --- ၂။ Premium Emoji IDs ---
 HEART_EMOJI_ID = "6179090116414283047"
 DIAMOND_EMOJI_ID = "6185744240526499155"
 WEEKLY_EMOJI_ID = "6179026014027389952"
@@ -33,33 +37,19 @@ ARROW_EMOJI_ID = "6199561309231522146"
 REGULAR_EMOJI_ID = "6186142585858301432"
 REQ_EMOJI_ID = "6199433963451194506"
 
-logging.basicConfig(level=logging.INFO)
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+h_emo = f"<tg-emoji emoji-id='{HEART_EMOJI_ID}'>❤️</tg-emoji>"
+d_emo = f"<tg-emoji emoji-id='{DIAMOND_EMOJI_ID}'>💎</tg-emoji>"
+w_emo = f"<tg-emoji emoji-id='{WEEKLY_EMOJI_ID}'>📆</tg-emoji>"
+t_emo = f"<tg-emoji emoji-id='{TWILIGHT_EMOJI_ID}'>🛡️</tg-emoji>"
+wb_emo = f"<tg-emoji emoji-id='{WBUNDLE_EMOJI_ID}'>🎁</tg-emoji>"
+m_emo = f"<tg-emoji emoji-id='{MBUNDLE_EMOJI_ID}'>👑</tg-emoji>"
+db_emo = f"<tg-emoji emoji-id='{DOUBLE_EMOJI_ID}'>💎</tg-emoji>"
+re_emo = f"<tg-emoji emoji-id='{RATE_EMOJI_ID}'>📊</tg-emoji>"
+a_emo = f"<tg-emoji emoji-id='{ARROW_EMOJI_ID}'>➡️</tg-emoji>"
+rg_emo = f"<tg-emoji emoji-id='{REGULAR_EMOJI_ID}'>💎</tg-emoji>"
+rq_emo = f"<tg-emoji emoji-id='{REQ_EMOJI_ID}'>🔑</tg-emoji>"
 
-# --- Database Helper Functions (MongoDB Version) ---
-
-async def get_user_setting(user_id, key):
-    # User တစ်ဦးချင်းစီရဲ့ Setting ကို အရင်ရှာမည်
-    user = await users_col.find_one({"user_id": user_id, "key": key})
-    if user:
-        return user['value']
-    
-    # မရှိပါက Global Default (user_id: 0) ကို ရှာမည်
-    default = await users_col.find_one({"user_id": 0, "key": key})
-    if default:
-        return default['value']
-    
-    # လုံးဝမရှိသေးပါက Default တန်ဖိုးများ သတ်မှတ်ပေးရန်
-    defaults = {"rate_large": 80.0, "rate_small": 80.0, "profit": 5.0}
-    return defaults.get(key)
-
-async def is_approved(user_id):
-    if user_id == ADMIN_ID: return True
-    user = await approved_col.find_one({"user_id": user_id})
-    return user is not None
-
-# --- ဈေးနှုန်းဒေတာများ ---
+# --- ၃။ ဈေးနှုန်းဒေတာများ ---
 COIN_PRICES = {
     "Small": {"11": 9.50, "22": 19.00, "33": 28.50, "44": 38.00, "56": 47.50, "112": 95.00},
     "Double": {"55": 39.00, "165": 116.90, "275": 187.50, "565": 385.00},
@@ -77,356 +67,151 @@ COIN_PRICES = {
     "Others": {"tp": 402.50, "web": 39.00, "meb": 196.50}
 }
 
-async def calc(coin_val, user_id, is_small=False):
-    if is_small:
-        rate = await get_user_setting(user_id, 'rate_small')
-    else:
-        rate = await get_user_setting(user_id, 'rate_large')
-    profit = await get_user_setting(user_id, 'profit')
-    total = (coin_val * rate) * (1 + profit / 100)
-    return int(round(total / 50) * 50)
+# --- ၄။ Database & Helper Functions ---
+async def get_user_setting(user_id, key):
+    user = await users_col.find_one({"user_id": user_id, "key": key})
+    if user: return user['value']
+    default = await users_col.find_one({"user_id": 0, "key": key})
+    return default['value'] if default else {"rate_large": 80.0, "rate_small": 80.0, "profit": 5.0}.get(key)
 
-# --- Premium Emoji Global Variables ---
-h_emo = f"<tg-emoji emoji-id='{HEART_EMOJI_ID}'>❤️</tg-emoji>"
-d_emo = f"<tg-emoji emoji-id='{DIAMOND_EMOJI_ID}'>💎</tg-emoji>"
-w_emo = f"<tg-emoji emoji-id='{WEEKLY_EMOJI_ID}'>📆</tg-emoji>"
-t_emo = f"<tg-emoji emoji-id='{TWILIGHT_EMOJI_ID}'>🛡️</tg-emoji>"
-wb_emo = f"<tg-emoji emoji-id='{WBUNDLE_EMOJI_ID}'>🎁</tg-emoji>"
-m_emo = f"<tg-emoji emoji-id='{MBUNDLE_EMOJI_ID}'>👑</tg-emoji>"
-db_emo = f"<tg-emoji emoji-id='{DOUBLE_EMOJI_ID}'>💎</tg-emoji>"
-re_emo = f"<tg-emoji emoji-id='{RATE_EMOJI_ID}'>📊</tg-emoji>"
-a_emo = f"<tg-emoji emoji-id='{ARROW_EMOJI_ID}'>➡️</tg-emoji>"
-rg_emo = f"<tg-emoji emoji-id='{REGULAR_EMOJI_ID}'>💎</tg-emoji>"
-rq_emo = f"<tg-emoji emoji-id='{REQ_EMOJI_ID}'>🔑</tg-emoji>"
+async def is_approved(user_id):
+    if user_id == ADMIN_ID: return True
+    user = await approved_col.find_one({"user_id": user_id})
+    return user is not None
 
-# --- Handlers ---
-
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    if not await is_approved(message.from_user.id):
-        await message.answer(f"<tg-emoji emoji-id='{RATE_EMOJI_ID}'>❤️</tg-emoji>", parse_mode="HTML")
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔑 အသုံးပြုခွင့်တောင်းရန်", callback_data=f"req_{message.from_user.id}")]
-        ])
-        return await message.answer("❌ သင်သည် ဤဘော့ကို အသုံးပြုခွင့် မရှိသေးပါ။\nAdmin ထံမှ ခွင့်ပြုချက် အရင်တောင်းပါ။", parse_mode="HTML", reply_markup=kb)
-
-    text = f"{h_emo} <b>MLBB Diamond Price Calculator</b> {h_emo}\n\n🤖 ဤဘော့သည် MLBB Diamond ဈေးနှုန်းများကို တွက်ချက်ပေးသည်။\n\n📋 <b>အသုံးပြုနည်း:</b>\n• /price - ဈေးနှုန်းစာရင်းကြည့်ရန်\n• /r &lt;ဈေးနှုန်း&gt; - အကြီးစိန်များအတွက် rate သတ်မှတ်ရန်\n• /r2 &lt;ဈေးနှုန်း&gt; - စိန်အသေးများအတွက် rate သတ်မှတ်ရန်\n• /s &lt;ရာခိုင်နှုန်း&gt; - အမြတ်ငွေ သတ်မှတ်ရန်\n\n⚙️ သင့်ဈေးနှုန်းများကို ပြောင်းလဲပြီး /price နဲ့ ကြည့်နိုင်ပါသည်။"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Price List", callback_data="btn_price")],
-        [InlineKeyboardButton(text="⚙️ Set Rates", callback_data="btn_set_rate")],
-        [InlineKeyboardButton(text="💰 Set Profit", callback_data="btn_set_profit")]
-    ])
-    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-
-# --- Optimized Calculation Functions ---
-
-@dp.message(Command("price"))
-async def cmd_price(message: Message):
-    if not await is_approved(message.from_user.id):
-        await message.reply("❌ သင်သည် ဤဘော့ကို အသုံးပြုခွင့် မရှိသေးပါ။")
-        return
-
-    # Database ကို ၃ ကြိမ်ပဲ ခေါ်ပြီး Memory ထဲမှာ သိမ်းထားမယ်
-    user_id = message.from_user.id
-    rate_l = await get_user_setting(user_id, 'rate_large')
-    rate_s = await get_user_setting(user_id, 'rate_small')
-    profit = await get_user_setting(user_id, 'profit')
-
-    # တွက်ချက်မှုအတွက် Local Function တစ်ခု ဆောက်ထားမယ်
-    def quick_calc(coin_val, r, p):
-        total = (coin_val * r) * (1 + p / 100)
-        return int(round(total / 50) * 50)
-
-    text = f"{h_emo} <b>MLBB Diamond Prices</b> {h_emo}\n\n"
-    
-    # Weekly Pass Section
-    text += f"{w_emo} <b>Weekly Pass:</b>\n"
-    for k, v in COIN_PRICES["WP"].items():
-        res = quick_calc(v, rate_l, profit)
-        text += f"• {k} {a_emo} {res:,} MMK\n"
-
-    # Regular & Small Diamonds Section
-    text += f"\n{rg_emo} <b>Regular Diamonds:</b>\n"
-    for k, v in COIN_PRICES["Small"].items():
-        res = quick_calc(v, rate_s, profit) # စိန်အသေးအတွက် rate_small သုံးမယ်
-        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
-        
-    for k, v in COIN_PRICES["Regular"].items():
-        res = quick_calc(v, rate_l, profit)
-        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
-
-    # Double Diamonds Section
-    text += f"\n{db_emo} <b>2X Diamond Pass:</b> {db_emo}\n"
-    for k, v in COIN_PRICES["Double"].items():
-        res = quick_calc(v, rate_l, profit)
-        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
-
-    # Others Section
-    text += f"\n{t_emo} • Twilight Pass = {quick_calc(COIN_PRICES['Others']['tp'], rate_l, profit):,} MMK\n"
-    text += f"{w_emo} Weekly elite bundle = {quick_calc(COIN_PRICES['Others']['web'], rate_l, profit):,} MMK\n"
-    text += f"{m_emo} Monthly epic bundle = {quick_calc(COIN_PRICES['Others']['meb'], rate_l, profit):,} MMK\n"
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Price", callback_data="btn_price")],
-        [InlineKeyboardButton(text="⚙️ Set Rates", callback_data="btn_set_rate")],
-        [InlineKeyboardButton(text="💰 Set Profit", callback_data="btn_set_profit")]
-    ])
-    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-
-@dp.callback_query(F.data == "btn_price")
-async def btn_price(cb: CallbackQuery):
-    if not await is_approved(cb.from_user.id):
-        await cb.answer("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။", show_alert=True)
-        return
-
-    # Callback မှာလည်း အပေါ်ကအတိုင်း Database ခေါ်တာ လျှော့ချမယ်
-    user_id = cb.from_user.id
-    rate_l = await get_user_setting(user_id, 'rate_large')
-    rate_s = await get_user_setting(user_id, 'rate_small')
-    profit = await get_user_setting(user_id, 'profit')
-
-    def quick_calc(coin_val, r, p):
-        total = (coin_val * r) * (1 + p / 100)
-        return int(round(total / 50) * 50)
-
-    text = f"{h_emo} <b>MLBB Diamond Prices</b> {h_emo}\n\n"
-    
-    text += f"{w_emo} <b>Weekly Pass:</b>\n"
-    for k, v in COIN_PRICES['WP'].items():
-        res = quick_calc(v, rate_l, profit)
-        text += f"• {k} {a_emo} {res:,} MMK\n"
-    
-    text += f"\n{rg_emo} <b>Regular Diamonds:</b>\n"
-    for k, v in COIN_PRICES['Small'].items():
-        res = quick_calc(v, rate_s, profit)
-        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
-        
-    for k, v in COIN_PRICES['Regular'].items():
-        res = quick_calc(v, rate_l, profit)
-        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
-    
-    text += f"\n{db_emo} <b>2X Diamond Pass:</b> {db_emo}\n"
-    for k, v in COIN_PRICES['Double'].items():
-        res = quick_calc(v, rate_l, profit)
-        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
-    
-    text += f"\n{t_emo} • Twilight Pass = {quick_calc(COIN_PRICES['Others']['tp'], rate_l, profit):,} MMK\n"
-    text += f"{w_emo} Weekly elite bundle = {quick_calc(COIN_PRICES['Others']['web'], rate_l, profit):,} MMK\n"
-    text += f"{m_emo} Monthly epic bundle = {quick_calc(COIN_PRICES['Others']['meb'], rate_l, profit):,} MMK\n"
-
-    await cb.message.answer(text, parse_mode='HTML')
-    await cb.answer()
-
-@dp.callback_query(F.data.startswith("req_"))
-async def request_access(cb: CallbackQuery):
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ ခွင့်ပြုမည်", callback_data=f"ok_{cb.from_user.id}")]])
-    await bot.send_message(ADMIN_ID, f"👤 <b>Access Request</b>\nName: {cb.from_user.full_name}\nID: {cb.from_user.id}", parse_mode="HTML", reply_markup=kb)
-    await cb.answer("Admin ထံသို့ တောင်းဆိုချက် ပို့ပြီးပါပြီ။", show_alert=True)
-
-@dp.callback_query(F.data.startswith("ok_"))
-async def approve_user(cb: CallbackQuery):
-    if cb.from_user.id != ADMIN_ID: return
-    uid = int(cb.data.split("_")[1])
-    await approved_col.update_one({"user_id": uid}, {"$set": {"approved": True}}, upsert=True)
-    await bot.send_message(uid, "✅ Admin က သင့်ကို အသုံးပြုခွင့် ပေးလိုက်ပါပြီ။\n/price ကို သုံးနိုင်ပါပြီ။")
-    await cb.message.edit_text(f"✅ User {uid} ကို ခွင့်ပြုပြီးပါပြီ။")
-
-@dp.callback_query(F.data == "btn_price")
-async def btn_price(cb: CallbackQuery):
-    if not await is_approved(cb.from_user.id):
-        await cb.answer("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။", show_alert=True)
-        return
-    
-    text = f"{h_emo} <b>MLBB Diamond Prices</b> {h_emo}\n\n{w_emo} <b>Weekly Pass:</b>\n"
-    for k, v in COIN_PRICES['WP'].items():
-        res = await calc(v, cb.from_user.id)
-        text += f"• {k} {a_emo} {res:,} MMK\n"
-    
-    text += f"\n{rg_emo} <b>Regular Diamonds:</b>\n"
-    for k, v in COIN_PRICES['Small'].items():
-        res = await calc(v, cb.from_user.id, is_small=True)
-        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n\n"
-    for k, v in COIN_PRICES['Regular'].items():
-        res = await calc(v, cb.from_user.id)
-        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
-    
-    text += f"\n{db_emo} <b>2X Diamond Pass:</b> {db_emo}\n"
-    for k, v in COIN_PRICES['Double'].items():
-        res = await calc(v, cb.from_user.id)
-        text += f"{d_emo} • {k} {a_emo} {res:,} MMK\n"
-    
-    text += f"\n{t_emo} • Twilight Pass = {await calc(COIN_PRICES['Others']['tp'], cb.from_user.id):,} MMK\n"
-    text += f"{w_emo} Weekly elite bundle = {await calc(COIN_PRICES['Others']['web'], cb.from_user.id):,} MMK\n"
-    text += f"{m_emo} Monthly epic bundle = {await calc(COIN_PRICES['Others']['meb'], cb.from_user.id):,} MMK\n"
-    await cb.message.answer(text, parse_mode='HTML')
-    await cb.answer()
-
-@dp.callback_query(F.data == "btn_set_rate")
-async def btn_set_rate(cb: CallbackQuery):
-    if not await is_approved(cb.from_user.id):
-        await cb.answer("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။", show_alert=True)
-        return
-    await cb.message.answer("📌 ဈေးနှုန်းကို အသေးစိတ် စည်းမျဉ်းပါ:\n/r &lt;အကြီးဈေးနှုန်း&gt; - အကြီးစိန်များအတွက်\n/r2 &lt;အသေးဈေးနှုန်း&gt; - စိန်အသေးများအတွက်\nဥပမာ: /r 85, /r2 90")
-    await cb.answer()
-
-@dp.callback_query(F.data == "btn_set_profit")
-async def btn_set_profit(cb: CallbackQuery):
-    if not await is_approved(cb.from_user.id):
-        await cb.answer("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။", show_alert=True)
-        return
-
-    text = (
-        "⚙️ **Admin Setting Panel**\n\n"
-        "📈 **အမြတ် % ပြင်ရန်:**\n"
-        "➡️ `/s <ဂဏန်း>` (ဥပမာ: `/s 10`)\n\n"
-        "💰 **USD ဈေးနှုန်း (Base Rate) ပြင်ရန်:**\n"
-        "➡️ `/setrate <ဂဏန်း>` (ဥပမာ: `/setrate 4650`)\n\n"
-        "💡 *ဤဈေးနှုန်းအပေါ်မူတည်၍ TON နှင့် Baht ဈေးများကို Bot မှ အော်တိုတွက်ချက်ပေးမည်။*"
-    )
-    
-    await cb.message.answer(text, parse_mode="Markdown")
-    await cb.answer()
-
-@dp.message(Command("r", "r2", "s"))
-async def handle_settings(message: Message, command: Command):
-    if not await is_approved(message.from_user.id):
-        await message.reply("❌ သင်သည် ဤဘော့ကို အသုံးပြုခွင့် မရှိသေးပါ။")
-        return
-    try:
-        val = float(message.text.split()[1])
-        key = "rate_large" if command.command == "r" else "rate_small" if command.command == "r2" else "profit"
-        await users_col.update_one({"user_id": message.from_user.id, "key": key}, {"$set": {"value": val}}, upsert=True)
-        await message.reply(f"{re_emo} သတ်မှတ်ချက် အောင်မြင်ပါသည်။", parse_mode="HTML")
-    except:
-        await message.reply("❌ မှန်ကန်စွာ ထည့်သွင်းပါ။")
-
-async def main():
-    # Global Default များ ထည့်သွင်းရန် (user_id: 0)
-    for key, val in [("rate_large", 80.0), ("rate_small", 80.0), ("profit", 5.0)]:
-        await users_col.update_one({"user_id": 0, "key": key}, {"$set": {"value": val}}, upsert=True)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
-# --- Database မှ လက်ရှိ USD ဈေးနှုန်းကို ယူသည့် Function ---
 async def get_db_rate():
-    # 'settings' collection ထဲက rate_config ကို ရှာမယ်
     config = await db.settings.find_one({"type": "rate_config"})
-    if config:
-        return config.get("usd_to_mmk", 4550)  # DB မှာ ရှိရင် အဲဒီဈေးယူ၊ မရှိရင် 4550
-    return 4550
+    return config.get("usd_to_mmk", 4550) if config else 4550
 
-# --- Binance API မှ TON နှင့် THB ဈေးနှုန်းဆွဲယူရန် Function ---
 async def get_exchange_data():
     url = "https://api.binance.com/api/v3/ticker/price"
-    symbols = ["TONUSDT", "USDTTHB"]
     rates = {}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=10) as response:
                 data = await response.json()
                 for item in data:
-                    if item['symbol'] in symbols:
+                    if item['symbol'] in ["TONUSDT", "USDTTHB"]:
                         rates[item['symbol']] = float(item['price'])
         return rates
-    except Exception as e:
-        logging.error(f"Binance API Error: {e}")
-        return {"TONUSDT": 0, "USDTTHB": 35}
+    except Exception: return {"TONUSDT": 0, "USDTTHB": 35}
 
-# --- 1. USD <-> MMK (u2m, m2u) ---
+# --- ၅။ Converter Handlers ---
 @dp.message(Command(re.compile(r"^(u2m|m2u)$", re.I)))
 async def usd_mmk_handler(message: Message):
-    # အသုံးပြုခွင့် စစ်ဆေးခြင်း
-    if not await is_approved(message.from_user.id):
-        return await message.reply("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။")
-
+    if not await is_approved(message.from_user.id): return
     args = message.text.split()
-    if len(args) < 2:
-        return await message.reply("💡 အသုံးပြုပုံ:\n`/u2m 100` (USD to MMK)\n`/m2u 50000` (MMK to USD)")
-
-    current_rate = await get_db_rate() # DB မှ ဈေးယူ
+    if len(args) < 2: return await message.reply("💡 /u2m 100")
+    rate = await get_db_rate()
     try:
-        amount = float(args[1])
+        val = float(args[1])
         if "u2m" in message.text.lower():
-            res = amount * current_rate
-            await message.reply(f"🇺🇸 {amount:,} USD\n➡️ {res:,.0f} MMK\n(Rate: {current_rate})")
+            await message.reply(f"🇺🇸 {val:,} USD\n➡️ {val*rate:,.0f} MMK\n(Rate: {rate})")
         else:
-            res = amount / current_rate
-            await message.reply(f"🇲🇲 {amount:,} MMK\n➡️ {res:,.2f} USD\n(Rate: {current_rate})")
-    except ValueError:
-        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်သွင်းပါ။")
+            await message.reply(f"🇲🇲 {val:,} MMK\n➡️ {val/rate:,.2f} USD\n(Rate: {rate})")
+    except: await message.reply("❌ ဂဏန်းထည့်ပါ။")
 
-# --- 2. Baht <-> MMK (b2m, m2b) ---
-@dp.message(Command(re.compile(r"^(b2m|m2b)$", re.I)))
-async def baht_mmk_handler(message: Message):
-    if not await is_approved(message.from_user.id):
-        return
-
+@dp.message(Command(re.compile(r"^(b2m|m2b|t2m|m2t)$", re.I)))
+async def other_converters(message: Message):
+    if not await is_approved(message.from_user.id): return
     args = message.text.split()
-    if len(args) < 2:
-        return await message.reply("💡 အသုံးပြုပုံ:\n`/b2m 100` (Baht to MMK)\n`/m2b 10000` (MMK to Baht)")
-
-    current_rate = await get_db_rate()
-    rates = await get_exchange_data()
-    usdt_thb = rates.get("USDTTHB", 35)
-    thb_mmk_rate = current_rate / usdt_thb
-
+    if len(args) < 2: return
+    rate = await get_db_rate()
+    ex = await get_exchange_data()
     try:
-        amount = float(args[1])
-        if "b2m" in message.text.lower():
-            res = amount * thb_mmk_rate
-            await message.reply(f"🇹🇭 {amount:,} THB\n➡️ {res:,.0f} MMK\n(Rate: {thb_mmk_rate:,.2f})")
-        else:
-            res = amount / thb_mmk_rate
-            await message.reply(f"🇲🇲 {amount:,} MMK\n➡️ {res:,.2f} THB\n(Rate: {thb_mmk_rate:,.2f})")
-    except ValueError:
-        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်သွင်းပါ။")
+        val = float(args[1])
+        cmd = message.text.lower()
+        if "b2m" in cmd:
+            r = rate / ex.get("USDTTHB", 35)
+            await message.reply(f"🇹🇭 {val:,} THB ➡️ {val*r:,.0f} MMK")
+        elif "m2b" in cmd:
+            r = rate / ex.get("USDTTHB", 35)
+            await message.reply(f"🇲🇲 {val:,} MMK ➡️ {val/r:,.2f} THB")
+        elif "t2m" in cmd:
+            r = ex.get("TONUSDT", 0) * rate
+            await message.reply(f"💎 {val:,} TON ➡️ {val*r:,.0f} MMK")
+        elif "m2t" in cmd:
+            r = ex.get("TONUSDT", 0) * rate
+            await message.reply(f"🇲🇲 {val:,} MMK ➡️ {val/r:,.4f} TON")
+    except: pass
 
-# --- 3. TON <-> MMK (t2m, m2t) ---
-@dp.message(Command(re.compile(r"^(t2m|m2t)$", re.I)))
-async def ton_mmk_handler(message: Message):
-    if not await is_approved(message.from_user.id):
-        return
-
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.reply("💡 အသုံးပြုပုံ:\n`/t2m 1` (TON to MMK)\n`/m2t 100000` (MMK to TON)")
-
-    current_rate = await get_db_rate()
-    rates = await get_exchange_data()
-    ton_usdt = rates.get("TONUSDT", 0)
-    ton_mmk_rate = ton_usdt * current_rate
-
-    try:
-        amount = float(args[1])
-        if "t2m" in message.text.lower():
-            res = amount * ton_mmk_rate
-            await message.reply(f"💎 {amount:,} TON\n➡️ {res:,.0f} MMK\n(Rate: {ton_mmk_rate:,.0f})")
-        else:
-            res = amount / ton_mmk_rate
-            await message.reply(f"🇲🇲 {amount:,} MMK\n➡️ {res:,.4f} TON\n(Rate: {ton_mmk_rate:,.0f})")
-    except ValueError:
-        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်သွင်းပါ။")
-
-# --- 4. Admin အတွက် USD ဈေးသတ်မှတ်ရန် Command ---
 @dp.message(Command("sr"))
-async def set_rate_command(message: Message):
-    # ဤနေရာတွင် Admin ID ဟုတ်မဟုတ် စစ်ဆေးနိုင်သည်
-    if not await is_approved(message.from_user.id):
-        return
-
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.reply("💡 အသုံးပြုပုံ - `/setrate 4650` ")
-
+async def set_db_rate(message: Message):
+    if not await is_approved(message.from_user.id): return
     try:
-        new_rate = int(args[1])
-        await db.settings.update_one(
-            {"type": "rate_config"},
-            {"$set": {"usd_to_mmk": new_rate}},
-            upsert=True
-        )
-        await message.reply(f"✅ USD Base Rate ကို {new_rate} MMK သို့ ပြောင်းလဲပြီးပါပြီ။")
-    except ValueError:
-        await message.reply("❌ ဂဏန်းအမှန်အတိုင်း ထည့်သွင်းပါ။")
+        new_rate = int(message.text.split()[1])
+        await db.settings.update_one({"type": "rate_config"}, {"$set": {"usd_to_mmk": new_rate}}, upsert=True)
+        await message.reply(f"✅ USD Base Rate: {new_rate} MMK")
+    except: await message.reply("❌ /sr 4650")
+
+# --- ၆။ MLBB Handlers ---
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    if not await is_approved(message.from_user.id):
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔑 အသုံးပြုခွင့်တောင်းရန်", callback_data=f"req_{message.from_user.id}")]])
+        return await message.answer("❌ အသုံးပြုခွင့်မရှိပါ။", reply_markup=kb)
+    
+    text = f"{h_emo} <b>MLBB Bot</b>\n\n/price - ဈေးနှုန်း\n/u2m, /b2m, /t2m - Converter"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Price List", callback_data="btn_price")],
+        [InlineKeyboardButton(text="⚙️ Set Rates", callback_data="btn_set_rate")],
+        [InlineKeyboardButton(text="💰 Set Profit", callback_data="btn_set_profit")]
+    ])
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@dp.message(Command("price"))
+@dp.callback_query(F.data == "btn_price")
+async def show_price(event):
+    uid = event.from_user.id
+    if not await is_approved(uid): return
+    rl = await get_user_setting(uid, 'rate_large')
+    rs = await get_user_setting(uid, 'rate_small')
+    p = await get_user_setting(uid, 'profit')
+    
+    def qc(v, r, pr): return int(round(((v * r) * (1 + pr / 100)) / 50) * 50)
+
+    res = f"{h_emo} <b>Diamond Prices</b>\n\n{w_emo} <b>Weekly:</b>\n"
+    for k, v in COIN_PRICES["WP"].items(): res += f"• {k} {a_emo} {qc(v, rl, p):,} MMK\n"
+    res += f"\n{rg_emo} <b>Regular:</b>\n"
+    for k, v in COIN_PRICES["Small"].items(): res += f"• {k} {a_emo} {qc(v, rs, p):,} MMK\n"
+    for k, v in COIN_PRICES["Regular"].items(): res += f"• {k} {a_emo} {qc(v, rl, p):,} MMK\n"
+    
+    msg = event if isinstance(event, Message) else event.message
+    await msg.answer(res, parse_mode="HTML")
+    if isinstance(event, CallbackQuery): await event.answer()
+
+@dp.callback_query(F.data.startswith(("req_", "ok_")))
+async def handle_auth(cb: CallbackQuery):
+    if cb.data.startswith("req_"):
+        await bot.send_message(ADMIN_ID, f"🔑 Request: {cb.from_user.id}", 
+                             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Allow", callback_data=f"ok_{cb.from_user.id}")]]))
+        await cb.answer("Admin ထံပို့ပြီး။")
+    else:
+        if cb.from_user.id != ADMIN_ID: return
+        uid = int(cb.data.split("_")[1])
+        await approved_col.update_one({"user_id": uid}, {"$set": {"approved": True}}, upsert=True)
+        await bot.send_message(uid, "✅ အသုံးပြုခွင့်ရပါပြီ။")
+        await cb.message.edit_text("Approved!")
+
+@dp.callback_query(F.data.in_(["btn_set_rate", "btn_set_profit"]))
+async def btn_settings(cb: CallbackQuery):
+    await cb.message.answer("⚙️ /r <L> | /r2 <S> | /s <%> | /sr <USD>")
+    await cb.answer()
+
+@dp.message(Command("r", "r2", "s"))
+async def handle_settings(message: Message, command: Command):
+    if not await is_approved(message.from_user.id): return
+    try:
+        val = float(message.text.split()[1])
+        k = "rate_large" if command.command == "r" else "rate_small" if command.command == "r2" else "profit"
+        await users_col.update_one({"user_id": message.from_user.id, "key": k}, {"$set": {"value": val}}, upsert=True)
+        await message.reply(f"✅ {k} = {val}")
+    except: await message.reply("❌ Error")
+
+async def main():
+    for k, v in [("rate_large", 80.0), ("rate_small", 80.0), ("profit", 5.0)]:
+        await users_col.update_one({"user_id": 0, "key": k}, {"$set": {"value": val}}, upsert=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
