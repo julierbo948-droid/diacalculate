@@ -314,34 +314,45 @@ async def get_db_rate():
 
 
 async def get_exchange_data():
-    rates = {"TONUSDT": 0, "USDTTHB": 35}
-    async with aiohttp.ClientSession() as session:
-        # Priority 1: CoinGecko (For TON) - IP Block ဖြစ်ခဲပါတယ်
-        try:
-            cg_url = "https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd"
-            async with session.get(cg_url, timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    rates["TONUSDT"] = float(data['the-open-network']['usd'])
-                else:
-                    # Priority 2: Binance (Backup)
-                    bn_url = "https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT"
-                    async with session.get(bn_url, timeout=5) as bn_resp:
-                        if bn_resp.status == 200:
-                            bn_data = await bn_resp.json()
-                            rates["TONUSDT"] = float(bn_data['price'])
-        except Exception as e:
-            logging.error(f"TON Price Fetch Error: {e}")
+    # အဆင်သင့်ရှိမယ့် Default ဈေးနှုန်းများ
+    rates = {"TONUSDT": 5.4, "USDTTHB": 35.8} 
+    
+    urls = [
+        "https://api.bybit.com/v5/market/tickers?category=spot&symbol=TONUSDT",
+        "https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd",
+        "https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT"
+    ]
 
-        # USDT/THB အတွက် Binance ကို ဆက်သုံးပါမယ် (ဒါက များသောအားဖြင့် block မဖြစ်ပါဘူး)
+    async with aiohttp.ClientSession() as session:
+        # 1. TON Price ကို Source ၃ ခုစလုံးကနေ တစ်ခုပြီးတစ်ခု စမ်းဆွဲမယ်
+        for url in urls:
+            try:
+                async with session.get(url, timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if "bybit" in url:
+                            rates["TONUSDT"] = float(data['result']['list'][0]['lastPrice'])
+                        elif "coingecko" in url:
+                            rates["TONUSDT"] = float(data['the-open-network']['usd'])
+                        elif "binance" in url:
+                            rates["TONUSDT"] = float(data['price'])
+                        
+                        if rates["TONUSDT"] > 0:
+                            break # တစ်ခုရတာနဲ့ ဆက်မစစ်တော့ဘဲ ရပ်မယ်
+            except:
+                continue
+
+        # 2. THB Price (Bybit က ပိုငြိမ်လို့ Bybit ကိုပါ ထည့်ထားတယ်)
         try:
-            async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTTHB", timeout=10) as resp:
+            thb_url = "https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTTHB"
+            async with session.get(thb_url, timeout=5) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    rates["USDTTHB"] = float(data['price'])
+                    rates["USDTTHB"] = float(data['result']['list'][0]['lastPrice'])
         except:
             pass
-    return rates         
+            
+    return rates
             
 
 # --- 1. USD <-> MMK (u2m, m2u) ---
@@ -360,7 +371,7 @@ async def converter_handler(message: Message):
         if "u2m" in cmd:
             await message.reply(f"🇺🇸 {val:,} USD\n🇲🇲 {val * usd_rate:,.0f} MMK\n\n(Rate: {usd_rate})")
         elif "m2u" in cmd:
-            await message.reply(f"🇲🇲 {val:,} MMK\n🇺🇸 {val / usd_rate:,.2f} USD\n\\n(Rate: {usd_rate})")
+            await message.reply(f"🇲🇲 {val:,} MMK\n🇺🇸 {val / usd_rate:,.2f} USD\n\n(Rate: {usd_rate})")
         elif "b2m" in cmd:
             r = usd_rate / ex["USDTTHB"]
             await message.reply(f"🇹🇭 {val:,} THB\n🇲🇲 {val * r:,.0f} MMK\n\n(Rate: {r:,.2f})")
