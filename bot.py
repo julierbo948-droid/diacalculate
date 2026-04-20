@@ -312,25 +312,26 @@ async def get_db_rate():
         return config.get("usd_to_mmk", 4550)  # DB မှာ ရှိရင် အဲဒီဈေးယူ၊ မရှိရင် 4550
     return 4550
 
-# --- Binance API မှ TON နှင့် THB ဈေးနှုန်းဆွဲယူရန် Function ---
+
 async def get_exchange_data():
-    url = "https://api.binance.com/api/v3/ticker/price"
+    # Binance API ကို ပိုပြီး တိကျတဲ့ URL သုံးလိုက်ပါတယ် (Symbol တစ်ခုချင်းစီ ခေါ်တာ ပိုစိတ်ချရပါတယ်)
     rates = {"TONUSDT": 0, "USDTTHB": 35}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    # List format ကို loop ပတ်ပြီး symbol ရှာရပါမယ်
-                    for item in data:
-                        if item['symbol'] == "TONUSDT":
-                            rates["TONUSDT"] = float(item['price'])
-                        elif item['symbol'] == "USDTTHB":
-                            rates["USDTTHB"] = float(item['price'])
-        return rates
-    except Exception as e:
-        logging.error(f"Binance API Error: {e}")
-        return rates
+    async with aiohttp.ClientSession() as session:
+        try:
+            # TON Rate ဆွဲခြင်း
+            async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT", timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    rates["TONUSDT"] = float(data['price'])
+            
+            # Baht Rate ဆွဲခြင်း
+            async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTTHB", timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    rates["USDTTHB"] = float(data['price'])
+        except Exception as e:
+            logging.error(f"Binance API Error: {e}")
+    return rates
 
 # --- 1. USD <-> MMK (u2m, m2u) ---
 @dp.message(Command(re.compile(r"^(u2m|m2u|b2m|m2b|t2m|m2t)$", re.I)))
