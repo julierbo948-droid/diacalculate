@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from aiogram import Bot, Dispatcher, F
@@ -273,7 +274,17 @@ async def btn_set_profit(cb: CallbackQuery):
     if not await is_approved(cb.from_user.id):
         await cb.answer("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။", show_alert=True)
         return
-    await cb.message.answer("📌 အမြတ်ငွေ% ကို အသေးစိတ် စည်းမျဉ်းပါ: /s &lt;အတန်ဖိုး&gt;\nဥပမာ: /s 10")
+
+    text = (
+        "⚙️ **Admin Setting Panel**\n\n"
+        "📈 **အမြတ် % ပြင်ရန်:**\n"
+        "➡️ `/s <ဂဏန်း>` (ဥပမာ: `/s 10`)\n\n"
+        "💰 **USD ဈေးနှုန်း (Base Rate) ပြင်ရန်:**\n"
+        "➡️ `/setrate <ဂဏန်း>` (ဥပမာ: `/setrate 4650`)\n\n"
+        "💡 *ဤဈေးနှုန်းအပေါ်မူတည်၍ TON နှင့် Baht ဈေးများကို Bot မှ အော်တိုတွက်ချက်ပေးမည်။*"
+    )
+    
+    await cb.message.answer(text, parse_mode="Markdown")
     await cb.answer()
 
 @dp.message(Command("r", "r2", "s"))
@@ -297,3 +308,125 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+# --- Database မှ လက်ရှိ USD ဈေးနှုန်းကို ယူသည့် Function ---
+async def get_db_rate():
+    # 'settings' collection ထဲက rate_config ကို ရှာမယ်
+    config = await db.settings.find_one({"type": "rate_config"})
+    if config:
+        return config.get("usd_to_mmk", 4550)  # DB မှာ ရှိရင် အဲဒီဈေးယူ၊ မရှိရင် 4550
+    return 4550
+
+# --- Binance API မှ TON နှင့် THB ဈေးနှုန်းဆွဲယူရန် Function ---
+async def get_exchange_data():
+    url = "https://api.binance.com/api/v3/ticker/price"
+    symbols = ["TONUSDT", "USDTTHB"]
+    rates = {}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as response:
+                data = await response.json()
+                for item in data:
+                    if item['symbol'] in symbols:
+                        rates[item['symbol']] = float(item['price'])
+        return rates
+    except Exception as e:
+        logging.error(f"Binance API Error: {e}")
+        return {"TONUSDT": 0, "USDTTHB": 35}
+
+# --- 1. USD <-> MMK (u2m, m2u) ---
+@dp.message(Command(re.compile(r"^(u2m|m2u)$", re.I)))
+async def usd_mmk_handler(message: Message):
+    # အသုံးပြုခွင့် စစ်ဆေးခြင်း
+    if not await is_approved(message.from_user.id):
+        return await message.reply("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။")
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply("💡 အသုံးပြုပုံ:\n`/u2m 100` (USD to MMK)\n`/m2u 50000` (MMK to USD)")
+
+    current_rate = await get_db_rate() # DB မှ ဈေးယူ
+    try:
+        amount = float(args[1])
+        if "u2m" in message.text.lower():
+            res = amount * current_rate
+            await message.reply(f"🇺🇸 {amount:,} USD\n➡️ {res:,.0f} MMK\n(Rate: {current_rate})")
+        else:
+            res = amount / current_rate
+            await message.reply(f"🇲🇲 {amount:,} MMK\n➡️ {res:,.2f} USD\n(Rate: {current_rate})")
+    except ValueError:
+        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်သွင်းပါ။")
+
+# --- 2. Baht <-> MMK (b2m, m2b) ---
+@dp.message(Command(re.compile(r"^(b2m|m2b)$", re.I)))
+async def baht_mmk_handler(message: Message):
+    if not await is_approved(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply("💡 အသုံးပြုပုံ:\n`/b2m 100` (Baht to MMK)\n`/m2b 10000` (MMK to Baht)")
+
+    current_rate = await get_db_rate()
+    rates = await get_exchange_data()
+    usdt_thb = rates.get("USDTTHB", 35)
+    thb_mmk_rate = current_rate / usdt_thb
+
+    try:
+        amount = float(args[1])
+        if "b2m" in message.text.lower():
+            res = amount * thb_mmk_rate
+            await message.reply(f"🇹🇭 {amount:,} THB\n➡️ {res:,.0f} MMK\n(Rate: {thb_mmk_rate:,.2f})")
+        else:
+            res = amount / thb_mmk_rate
+            await message.reply(f"🇲🇲 {amount:,} MMK\n➡️ {res:,.2f} THB\n(Rate: {thb_mmk_rate:,.2f})")
+    except ValueError:
+        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်သွင်းပါ။")
+
+# --- 3. TON <-> MMK (t2m, m2t) ---
+@dp.message(Command(re.compile(r"^(t2m|m2t)$", re.I)))
+async def ton_mmk_handler(message: Message):
+    if not await is_approved(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply("💡 အသုံးပြုပုံ:\n`/t2m 1` (TON to MMK)\n`/m2t 100000` (MMK to TON)")
+
+    current_rate = await get_db_rate()
+    rates = await get_exchange_data()
+    ton_usdt = rates.get("TONUSDT", 0)
+    ton_mmk_rate = ton_usdt * current_rate
+
+    try:
+        amount = float(args[1])
+        if "t2m" in message.text.lower():
+            res = amount * ton_mmk_rate
+            await message.reply(f"💎 {amount:,} TON\n➡️ {res:,.0f} MMK\n(Rate: {ton_mmk_rate:,.0f})")
+        else:
+            res = amount / ton_mmk_rate
+            await message.reply(f"🇲🇲 {amount:,} MMK\n➡️ {res:,.4f} TON\n(Rate: {ton_mmk_rate:,.0f})")
+    except ValueError:
+        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်သွင်းပါ။")
+
+# --- 4. Admin အတွက် USD ဈေးသတ်မှတ်ရန် Command ---
+@dp.message(Command("sr"))
+async def set_rate_command(message: Message):
+    # ဤနေရာတွင် Admin ID ဟုတ်မဟုတ် စစ်ဆေးနိုင်သည်
+    if not await is_approved(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply("💡 အသုံးပြုပုံ - `/setrate 4650` ")
+
+    try:
+        new_rate = int(args[1])
+        await db.settings.update_one(
+            {"type": "rate_config"},
+            {"$set": {"usd_to_mmk": new_rate}},
+            upsert=True
+        )
+        await message.reply(f"✅ USD Base Rate ကို {new_rate} MMK သို့ ပြောင်းလဲပြီးပါပြီ။")
+    except ValueError:
+        await message.reply("❌ ဂဏန်းအမှန်အတိုင်း ထည့်သွင်းပါ။")
