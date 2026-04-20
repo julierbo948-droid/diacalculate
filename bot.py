@@ -315,94 +315,55 @@ async def get_db_rate():
 # --- Binance API မှ TON နှင့် THB ဈေးနှုန်းဆွဲယူရန် Function ---
 async def get_exchange_data():
     url = "https://api.binance.com/api/v3/ticker/price"
-    symbols = ["TONUSDT", "USDTTHB"]
-    rates = {}
+    rates = {"TONUSDT": 0, "USDTTHB": 35}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=10) as response:
-                data = await response.json()
-                for item in data:
-                    if item['symbol'] in symbols:
-                        rates[item['symbol']] = float(item['price'])
+                if response.status == 200:
+                    data = await response.json()
+                    # List format ကို loop ပတ်ပြီး symbol ရှာရပါမယ်
+                    for item in data:
+                        if item['symbol'] == "TONUSDT":
+                            rates["TONUSDT"] = float(item['price'])
+                        elif item['symbol'] == "USDTTHB":
+                            rates["USDTTHB"] = float(item['price'])
         return rates
     except Exception as e:
         logging.error(f"Binance API Error: {e}")
-        return {"TONUSDT": 0, "USDTTHB": 35}
+        return rates
 
 # --- 1. USD <-> MMK (u2m, m2u) ---
-@dp.message(Command(re.compile(r"^(u2m|m2u)$", re.I)))
-async def usd_mmk_handler(message: Message):
-    # အသုံးပြုခွင့် စစ်ဆေးခြင်း
-    if not await is_approved(message.from_user.id):
-        return await message.reply("❌ သင်သည်ဤဘော့ကို အသုံးပြုခွင့်မရှိသေးပါ။")
-
+@dp.message(Command(re.compile(r"^(u2m|m2u|b2m|m2b|t2m|m2t)$", re.I)))
+async def converter_handler(message: Message):
+    if not await is_approved(message.from_user.id): return
     args = message.text.split()
-    if len(args) < 2:
-        return await message.reply("💡 အသုံးပြုပုံ:\n`/u2m 100` (USD to MMK)\n`/m2u 50000` (MMK to USD)")
-
-    current_rate = await get_db_rate() # DB မှ ဈေးယူ
+    if len(args) < 2: return await message.reply("💡 ပမာဏ ထည့်ပေးပါ။ ဥပမာ - /u2m 10")
+    
     try:
-        amount = float(args[1])
-        if "u2m" in message.text.lower():
-            res = amount * current_rate
-            await message.reply(f"🇺🇸 {amount:,} USD\n➡️ {res:,.0f} MMK\n(Rate: {current_rate})")
-        else:
-            res = amount / current_rate
-            await message.reply(f"🇲🇲 {amount:,} MMK\n➡️ {res:,.2f} USD\n(Rate: {current_rate})")
+        val = float(args[1])
+        cmd = message.text.lower()
+        usd_rate = await get_db_rate()
+        ex = await get_exchange_data()
+        
+        if "u2m" in cmd:
+            await message.reply(f"🇺🇸 {val:,} USD\n{a_emo} {val * usd_rate:,.0f} MMK\n(Rate: {usd_rate})")
+        elif "m2u" in cmd:
+            await message.reply(f"🇲🇲 {val:,} MMK\n{a_emo} {val / usd_rate:,.2f} USD\n(Rate: {usd_rate})")
+        elif "b2m" in cmd:
+            r = usd_rate / ex["USDTTHB"]
+            await message.reply(f"🇹🇭 {val:,} THB\n{a_emo} {val * r:,.0f} MMK\n(Rate: {r:,.2f})")
+        elif "t2m" in cmd:
+            if ex["TONUSDT"] == 0:
+                return await message.reply("❌ Binance မှ TON ဈေးနှုန်း ဆွဲမရဖြစ်နေပါသည်။ ခဏနေမှ ပြန်ကြိုးစားပါ။")
+            r = ex["TONUSDT"] * usd_rate
+            await message.reply(f"💎 {val:,} TON\n{a_emo} {val * r:,.0f} MMK\n(Rate: {r:,.0f})")
+        elif "m2t" in cmd:
+            if ex["TONUSDT"] == 0: return await message.reply("❌ API Error")
+            r = ex["TONUSDT"] * usd_rate
+            await message.reply(f"🇲🇲 {val:,} MMK\n{a_emo} {val / r:,.4f} TON\n(Rate: {r:,.0f})")
+            
     except ValueError:
-        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်သွင်းပါ။")
-
-# --- 2. Baht <-> MMK (b2m, m2b) ---
-@dp.message(Command(re.compile(r"^(b2m|m2b)$", re.I)))
-async def baht_mmk_handler(message: Message):
-    if not await is_approved(message.from_user.id):
-        return
-
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.reply("💡 အသုံးပြုပုံ:\n`/b2m 100` (Baht to MMK)\n`/m2b 10000` (MMK to Baht)")
-
-    current_rate = await get_db_rate()
-    rates = await get_exchange_data()
-    usdt_thb = rates.get("USDTTHB", 35)
-    thb_mmk_rate = current_rate / usdt_thb
-
-    try:
-        amount = float(args[1])
-        if "b2m" in message.text.lower():
-            res = amount * thb_mmk_rate
-            await message.reply(f"🇹🇭 {amount:,} THB\n➡️ {res:,.0f} MMK\n(Rate: {thb_mmk_rate:,.2f})")
-        else:
-            res = amount / thb_mmk_rate
-            await message.reply(f"🇲🇲 {amount:,} MMK\n➡️ {res:,.2f} THB\n(Rate: {thb_mmk_rate:,.2f})")
-    except ValueError:
-        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်သွင်းပါ။")
-
-# --- 3. TON <-> MMK (t2m, m2t) ---
-@dp.message(Command(re.compile(r"^(t2m|m2t)$", re.I)))
-async def ton_mmk_handler(message: Message):
-    if not await is_approved(message.from_user.id):
-        return
-
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.reply("💡 အသုံးပြုပုံ:\n`/t2m 1` (TON to MMK)\n`/m2t 100000` (MMK to TON)")
-
-    current_rate = await get_db_rate()
-    rates = await get_exchange_data()
-    ton_usdt = rates.get("TONUSDT", 0)
-    ton_mmk_rate = ton_usdt * current_rate
-
-    try:
-        amount = float(args[1])
-        if "t2m" in message.text.lower():
-            res = amount * ton_mmk_rate
-            await message.reply(f"💎 {amount:,} TON\n➡️ {res:,.0f} MMK\n(Rate: {ton_mmk_rate:,.0f})")
-        else:
-            res = amount / ton_mmk_rate
-            await message.reply(f"🇲🇲 {amount:,} MMK\n➡️ {res:,.4f} TON\n(Rate: {ton_mmk_rate:,.0f})")
-    except ValueError:
-        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်သွင်းပါ။")
+        await message.reply("❌ ဂဏန်းသီးသန့် ထည့်ပေးပါ။")
 
 # --- 4. Admin အတွက် USD ဈေးသတ်မှတ်ရန် Command ---
 @dp.message(Command("sr"))
