@@ -314,29 +314,31 @@ async def get_db_rate():
 
 
 async def get_exchange_data():
+    # Default values များ သတ်မှတ်ထားခြင်း
     rates = {"TONUSDT": 0, "USDTTHB": 35}
+    
     async with aiohttp.ClientSession() as session:
         try:
-            # TONUSDT ကို တိုက်ရိုက်ခေါ်ယူခြင်း
+            # 1. TON Price ဆွဲခြင်း (Binance Single Symbol API)
             async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT", timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    rates["TONUSDT"] = float(data['price'])
+                    if 'price' in data:
+                        rates["TONUSDT"] = float(data['price'])
                 else:
-                    # Binance မရရင် CoinGecko ကနေ အရန် (Backup) အနေနဲ့ ဆွဲမယ်
-                    async with session.get("https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd") as cg_resp:
-                        cg_data = await cg_resp.json()
-                        rates["TONUSDT"] = float(cg_data['the-open-network']['usd'])
-            
-            # USDTTHB ဆွဲခြင်း
+                    logging.warning(f"Binance TON API Status: {resp.status}")
+
+            # 2. THB Price ဆွဲခြင်း
             async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTTHB", timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    rates["USDTTHB"] = float(data['price'])
+                    if 'price' in data:
+                        rates["USDTTHB"] = float(data['price'])
+        
         except Exception as e:
-            logging.error(f"Exchange API Error: {e}")
+            logging.error(f"Binance Connection Error: {e}")
+            
     return rates
-
 # --- 1. USD <-> MMK (u2m, m2u) ---
 @dp.message(Command(re.compile(r"^(u2m|m2u|b2m|m2b|t2m|m2t)$", re.I)))
 async def converter_handler(message: Message):
