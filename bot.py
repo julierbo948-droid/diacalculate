@@ -357,22 +357,22 @@ async def converter_handler(message: Message):
         usd_rate = await get_db_rate()
         ex = await get_exchange_data()
         
-        if "u2m" in cmd:
+        if "um" in cmd:
             await message.reply(f"🇺🇸 {val:,} USD\n🇲🇲 {val * usd_rate:,.0f} MMK\n\n(Rate: {usd_rate})")
-        elif "m2u" in cmd:
+        elif "mu" in cmd:
             await message.reply(f"🇲🇲 {val:,} MMK\n🇺🇸 {val / usd_rate:,.2f} USD\n\\n(Rate: {usd_rate})")
-        elif "b2m" in cmd:
+        elif "bm" in cmd:
             r = usd_rate / ex["USDTTHB"]
             await message.reply(f"🇹🇭 {val:,} THB\n🇲🇲 {val * r:,.0f} MMK\n\n(Rate: {r:,.2f})")
         elif "mb" in cmd:
             r = usd_rate / ex["USDTTHB"]
             await message.reply(f"🇲🇲 {val:,} MMK\n🇹🇭 {val * r:,.2f} TTHB\n\n(Rate: {r:,.2f})")    
-        elif "t2m" in cmd:
+        elif "tm" in cmd:
             if ex["TONUSDT"] == 0:
                 return await message.reply("❌ Binance မှ TON ဈေးနှုန်း ဆွဲမရဖြစ်နေပါသည်။ ခဏနေမှ ပြန်ကြိုးစားပါ။")
             r = ex["TONUSDT"] * usd_rate
             await message.reply(f"💎 {val:,} TON\n🇲🇲{val * r:,.0f} MMK\n\n(Rate: {r:,.0f})")
-        elif "m2t" in cmd:
+        elif "mt" in cmd:
             if ex["TONUSDT"] == 0: return await message.reply("❌ API Error")
             r = ex["TONUSDT"] * usd_rate
             await message.reply(f"🇲🇲 {val:,} MMK\n💎{val / r:,.4f} TON\n\n(Rate: {r:,.0f})")
