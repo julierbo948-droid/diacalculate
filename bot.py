@@ -314,23 +314,27 @@ async def get_db_rate():
 
 
 async def get_exchange_data():
-    # Binance API ကို ပိုပြီး တိကျတဲ့ URL သုံးလိုက်ပါတယ် (Symbol တစ်ခုချင်းစီ ခေါ်တာ ပိုစိတ်ချရပါတယ်)
     rates = {"TONUSDT": 0, "USDTTHB": 35}
     async with aiohttp.ClientSession() as session:
         try:
-            # TON Rate ဆွဲခြင်း
-            async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT", timeout=5) as resp:
+            # TONUSDT ကို တိုက်ရိုက်ခေါ်ယူခြင်း
+            async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT", timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     rates["TONUSDT"] = float(data['price'])
+                else:
+                    # Binance မရရင် CoinGecko ကနေ အရန် (Backup) အနေနဲ့ ဆွဲမယ်
+                    async with session.get("https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd") as cg_resp:
+                        cg_data = await cg_resp.json()
+                        rates["TONUSDT"] = float(cg_data['the-open-network']['usd'])
             
-            # Baht Rate ဆွဲခြင်း
-            async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTTHB", timeout=5) as resp:
+            # USDTTHB ဆွဲခြင်း
+            async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTTHB", timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     rates["USDTTHB"] = float(data['price'])
         except Exception as e:
-            logging.error(f"Binance API Error: {e}")
+            logging.error(f"Exchange API Error: {e}")
     return rates
 
 # --- 1. USD <-> MMK (u2m, m2u) ---
@@ -347,21 +351,21 @@ async def converter_handler(message: Message):
         ex = await get_exchange_data()
         
         if "u2m" in cmd:
-            await message.reply(f"🇺🇸 {val:,} USD\n 🇲🇲 {val * usd_rate:,.0f} MMK\n(Rate: {usd_rate})")
+            await message.reply(f"🇺🇸 {val:,} USD\n🇲🇲 {val * usd_rate:,.0f} MMK\n\n(Rate: {usd_rate})")
         elif "m2u" in cmd:
-            await message.reply(f"🇲🇲 {val:,} MMK\n 🇺🇸 {val / usd_rate:,.2f} USD\n(Rate: {usd_rate})")
+            await message.reply(f"🇲🇲 {val:,} MMK\n🇺🇸 {val / usd_rate:,.2f} USD\n\\n(Rate: {usd_rate})")
         elif "b2m" in cmd:
             r = usd_rate / ex["USDTTHB"]
-            await message.reply(f"🇹🇭 {val:,} THB\n 🇲🇲 {val * r:,.0f} MMK\n(Rate: {r:,.2f})")
+            await message.reply(f"🇹🇭 {val:,} THB\n🇲🇲 {val * r:,.0f} MMK\n\n(Rate: {r:,.2f})")
         elif "t2m" in cmd:
             if ex["TONUSDT"] == 0:
                 return await message.reply("❌ Binance မှ TON ဈေးနှုန်း ဆွဲမရဖြစ်နေပါသည်။ ခဏနေမှ ပြန်ကြိုးစားပါ။")
             r = ex["TONUSDT"] * usd_rate
-            await message.reply(f"💎 {val:,} TON\n {val * r:,.0f} MMK\n(Rate: {r:,.0f})")
+            await message.reply(f"💎 {val:,} TON\n🇲🇲{val * r:,.0f} MMK\n\n(Rate: {r:,.0f})")
         elif "m2t" in cmd:
             if ex["TONUSDT"] == 0: return await message.reply("❌ API Error")
             r = ex["TONUSDT"] * usd_rate
-            await message.reply(f"🇲🇲 {val:,} MMK\n {val / r:,.4f} TON\n(Rate: {r:,.0f})")
+            await message.reply(f"🇲🇲 {val:,} MMK\n💎{val / r:,.4f} TON\n\n(Rate: {r:,.0f})")
             
     except ValueError:
         await message.reply("❌ ဂဏန်းသီးသန့် ထည့်ပေးပါ။")
